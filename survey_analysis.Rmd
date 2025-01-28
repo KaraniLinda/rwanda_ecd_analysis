@@ -1,0 +1,76 @@
+---
+title: "rwanda_ecd"
+output: html_document
+date: "2025-01-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(here)
+library(viridis)
+library(sf)
+library(tmap)
+library(ggpp)
+library(raster)
+library(rasterVis)
+library(readxl)
+library(xml2)
+library("RColorBrewer")
+library(foreign)
+library(haven)
+library(Hmisc)
+library(fuzzyjoin)
+
+```
+
+
+
+```{r}
+#Load the files
+
+rwa_household <- read_dta("data/cs_S0_S5_Household.dta")
+rwa_exp_annual <- read_dta("data/cs_S8A1_expenditure.dta")
+rwa_exp_monthly <- read_dta("data/cs_S8A2_expenditure.dta")
+rwa_exp_weekly <- read_dta("data/cs_S8A3_expenditure.dta")
+rwa_exp_weekly2 <- read_dta("data/cs_S8B_expenditure.dta")
+rwa_exp_other <- read_dta("data/cs_S9E_Other_expenditure.dta")
+```
+
+
+
+```{r}
+##Use string to get column descriptions
+str(rwa_household)
+```
+
+
+```{r}
+#Convert select columns to factor columns to remove encoding
+
+#Columns to convert to factors
+
+factor_columns <- c("province", "district", "ur", "region", "poverty", "s8a1q0", "s8a2q0", "s8a3q0", "s8a1q1", "s8a2q1", "s8a3q1", "s8a1q2", "s8a2q2", "s8a3q2", "s9eq1")
+
+# Convert columns to factors for each data frame
+rwa_exp_annual <- rwa_exp_annual %>% 
+    mutate(across(any_of(factor_columns), as_factor))
+rwa_exp_monthly <- rwa_exp_monthly %>% 
+    mutate(across(any_of(factor_columns), as_factor))
+rwa_exp_weekly <- rwa_exp_weekly %>% 
+    mutate(across(any_of(factor_columns), as_factor))
+rwa_exp_weekly2 <- rwa_exp_weekly2 %>% 
+    mutate(across(any_of(factor_columns), as_factor))
+rwa_exp_other <- rwa_exp_other %>% 
+    mutate(across(any_of(factor_columns), as_factor))
+
+
+```
+
+
+
+
