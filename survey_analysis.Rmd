@@ -8,6 +8,8 @@ date: "2025-01-27"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
+## Importing data and libraries
 ```{r}
 # Load libraries
 library(tidyverse)
@@ -29,32 +31,33 @@ library(fuzzyjoin)
 ```
 
 
-
 ```{r}
-#Load the files
+#Load the rwanda survey files
 
 rwa_household <- read_dta("data/cs_S0_S5_Household.dta")
+rwa_individual <- read_dta("data/cs_S1_S2_S3_S4_S6A_S6E_Person.dta")
 rwa_exp_annual <- read_dta("data/cs_S8A1_expenditure.dta")
 rwa_exp_monthly <- read_dta("data/cs_S8A2_expenditure.dta")
 rwa_exp_weekly <- read_dta("data/cs_S8A3_expenditure.dta")
 rwa_exp_weekly2 <- read_dta("data/cs_S8B_expenditure.dta")
 rwa_exp_other <- read_dta("data/cs_S9E_Other_expenditure.dta")
+rwa_inc <- read_dta("data/cs_S9D_other_income.dta")
 ```
-
 
 
 ```{r}
-##Use string to get column descriptions
-str(rwa_household)
+#rds file to convert rwandan shillings to usd-ppp in 2025
+
+ppp_2017 <- read_rds("data/01_010_conversion_factors.rds")
 ```
 
-
+## Data cleaning
 ```{r}
 #Convert select columns to factor columns to remove encoding
 
 #Columns to convert to factors
 
-factor_columns <- c("province", "district", "ur", "region", "poverty", "s8a1q0", "s8a2q0", "s8a3q0", "s8a1q1", "s8a2q1", "s8a3q1", "s8a1q2", "s8a2q2", "s8a3q2", "s9eq1")
+factor_columns <- c("province", "district", "ur", "region", "poverty", "quintile" ,"s8a1q0", "s8a2q0", "s8a3q0", "s8a1q1", "s8a2q1", "s8a3q1", "s8a1q2", "s8a2q2", "s8a3q2", "s9eq1", "s1q1", "s1q2", "s9dq0", "s9dq1")
 
 # Convert columns to factors for each data frame
 rwa_exp_annual <- rwa_exp_annual %>% 
@@ -67,10 +70,420 @@ rwa_exp_weekly2 <- rwa_exp_weekly2 %>%
     mutate(across(any_of(factor_columns), as_factor))
 rwa_exp_other <- rwa_exp_other %>% 
     mutate(across(any_of(factor_columns), as_factor))
+rwa_individual <- rwa_individual %>% 
+     mutate(across(any_of(factor_columns), as_factor))
+rwa_inc <- rwa_inc %>% 
+    mutate(across(any_of(factor_columns), as_factor))
+    
+
+
+```
+
+## Descriptive statistics
+```{r}
+#Get household size for each household
+
+hhsize <- rwa_individual %>% 
+    group_by(hhid) %>% 
+    summarise(hhsize = n())
+```
+
+```{r}
+
+# Total population in Rwanda
+rwa_individual %>% 
+    summarise(sum(weight))
+```
+## Analysis
+```{r}
+
+# Select colums from individual survey file to merge with expenditure file
+
+rwa_individual_age <- rwa_individual %>% 
+  dplyr::select(hhid, weight, s1q1, s1q3y) %>%
+  rename(pop_weight = weight, age = s1q3y) %>%
+  mutate(age = as.numeric(age))
+
+# Merge expenditure files and individual survey file with age information
+
+rwa_merge <- rwa_exp_annual %>% 
+  left_join(rwa_individual_age, by = c("hhid" = "hhid"))
 
 
 ```
 
 
+### Total expenditure vs share spent on education for the entire population(14580 households)
+```{r}
+# Get the total expenditure of the population at different quantiles by region, province and district
+# The local currency is then converted to 2017_ppp LCU and 2017_ppp LCU equivalent values in 2025
+    # PPPs are both currency conversion factors and spatial price indexes. PPPs convert different currencies to a common currency and, in the process of conversion, equalize their purchasing power by controlling differences in price levels between countries.
 
+tot_expenditure_region <- rwa_exp_annual %>% 
+    group_by(region, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_province <- rwa_exp_annual %>% 
+    group_by(province, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_district <- rwa_exp_annual %>% 
+    group_by(district, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+```
+
+```{r}
+# Get the total expenditure of the population on education  at different quantiles by region, province and district
+# The local currency is then converted to 2017_ppp LCU and 2017_ppp LCU equivalent values in 2025 
+# Coicop code that start with 10 represents expenditure on education
+
+tot_educ_expenditure_region <- rwa_exp_annual %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(region, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_educ_expenditure_province <- rwa_exp_annual %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(province, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_educ_expenditure_district <- rwa_exp_annual %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(district, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+```
+
+
+```{r}
+# What percentage of total expenditure is spent on education
+
+# Merge the total expenditure and education expenditure data frames to enable us to get educ_share as a percentage of total education
+
+rwa_educ_exp_share_region <- merge(tot_expenditure_region, tot_educ_expenditure_region, by = c("region", "quintile"))
+rwa_educ_exp_share_province <- merge(tot_expenditure_province, tot_educ_expenditure_province, by = c("province", "quintile"))
+rwa_educ_exp_share_district <- merge(tot_expenditure_district, tot_educ_expenditure_district, by = c("district", "quintile"))
+```
+
+
+```{r}
+# Calculate education share as a total of total expenditure for the entire population by region, province and district
+
+rwa_educ_exp_share_region <- rwa_educ_exp_share_region %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+rwa_educ_exp_share_province <- rwa_educ_exp_share_province %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+rwa_educ_exp_share_district <- rwa_educ_exp_share_district %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+#Save the files as csv
+
+rwa_educ_exp_share_district %>% 
+    write_csv("rwa_educ_exp_district.csv")
+
+rwa_educ_exp_share_region %>% 
+    write_csv("rwa_educ_exp_region.csv")
+
+rwa_educ_exp_share_province %>% 
+    write_csv("rwa_educ_exp_province.csv")
+
+```
+
+
+```{r}
+# On average what percent of total expenditure is spent on education by the entire population(0.16%)
+
+tot_expenditure_pop <- rwa_exp_annual %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_educ_pop <- rwa_exp_annual %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+
+
+
+```
+
+
+### Total expenditure vs share spent on education for households with children between 0-6(8137 households)
+
+```{r}
+# Get population that is less than 6 years old
+
+rwa_early_childhood <- rwa_individual %>% 
+  dplyr::select(hhid, weight, s1q1, s1q3y) %>%
+  rename(pop_weight = weight, age = s1q3y) %>%
+  mutate(age = as.numeric(age)) %>% 
+  filter(age <= 6)
+
+# What is the total population that is between 0-6(ecd)- 2,301,045 people
+
+rwa_early_childhood %>% 
+    summarise(pop_ecd = sum(pop_weight))
+```
+
+
+```{r}
+# How many households have children between ages 0-6
+#8137 households have children between 0-6
+
+n_distinct(rwa_early_childhood$hhid)
+unique(rwa_early_childhood$hhid)
+```
+
+```{r}
+n_distinct(househld_ecd$hhid)
+```
+
+
+```{r}
+# Get all households ids with children between ages 0 and 6
+
+househld_ecd <- rwa_exp_annual %>% 
+    filter(hhid %in% unique(rwa_early_childhood$hhid))
+```
+
+```{r}
+# What is the population of all households with children between ages 0 and 6
+# 7,871,518
+
+rwa_pop_hh_ecd <- rwa_individual %>% 
+  dplyr::select(hhid, weight, s1q1, s1q3y) %>%
+  rename(pop_weight = weight, age = s1q3y) %>%
+  mutate(age = as.numeric(age)) %>% 
+  filter(hhid %in% unique(rwa_early_childhood$hhid))
+
+rwa_pop_hh_ecd %>% 
+    summarise(pop_hh_ecd = sum(pop_weight))
+```
+
+
+
+```{r}
+
+# For all households with children between 0-6 get the total expenditure and the percentage spent on education
+
+tot_expenditure_region_ecd <- househld_ecd %>% 
+    group_by(region, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_province_ecd <- househld_ecd %>% 
+    group_by(province, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_district_ecd <- househld_ecd %>% 
+    group_by(district, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+```
+
+
+
+```{r}
+# Get the total expenditure of households with children aged 0-6 on education  at different quantiles by region
+
+# Coicop code that start with 10 represents expenditure on education
+
+tot_educ_expenditure_region_ecd <- househld_ecd %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(region, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_educ_expenditure_province_ecd <- househld_ecd %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(province, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_educ_expenditure_district_ecd<- househld_ecd %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(district, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+```
+
+
+```{r}
+# Merge different dataframes
+
+rwa_educ_exp_share_region_ecd <- merge(tot_expenditure_region_ecd, tot_educ_expenditure_region_ecd, by = c("region", "quintile"))
+rwa_educ_exp_share_province_ecd <- merge(tot_expenditure_province_ecd, tot_educ_expenditure_province_ecd, by = c("province", "quintile"))
+rwa_educ_exp_share_district_ecd <- merge(tot_expenditure_district_ecd, tot_educ_expenditure_district_ecd, by = c("district", "quintile"))
+```
+
+
+```{r}
+# Calculate education share as a total of total expenditure
+
+rwa_educ_exp_share_region_ecd <- rwa_educ_exp_share_region_ecd %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+rwa_educ_exp_share_province_ecd <- rwa_educ_exp_share_province_ecd %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+rwa_educ_exp_share_district_ecd <- rwa_educ_exp_share_district_ecd %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+
+#Save the files as csv
+
+rwa_educ_exp_share_district_ecd %>% 
+    write_csv("output/rwa_educ_exp_district_ecd.csv")
+
+rwa_educ_exp_share_region_ecd %>% 
+    write_csv("output/rwa_educ_exp_region_ecd.csv")
+
+rwa_educ_exp_share_province_ecd %>% 
+    write_csv("output/rwa_educ_exp_province_ecd.csv")
+```
+
+
+
+### Total expenditure vs share spent on education for households with children between 0-6 who have reported expenditure on education(29 households)
+
+```{r}
+# Get number of households that declare expenditure on education
+
+househld_educ_exp <- rwa_exp_annual %>% 
+    filter((str_starts(s8a1q1, "10")) & s8a1q2 == "Yes")
+
+household_educ_exp_10 <- rwa_exp_annual %>% 
+    filter(hhid %in% househld_educ_exp$hhid)
+```
+
+
+```{r}
+##data check
+
+n_distinct(househld_educ_exp$hhid)
+n_distinct(household_educ_exp_10$hhid)
+```
+
+
+```{r}
+
+# For all households with children between 0-6 who report spending on education, get the total expenditure 
+
+tot_expenditure_region_hh10 <- household_educ_exp_10 %>% 
+    group_by(region, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_province_hh10 <- household_educ_exp_10 %>% 
+    group_by(province, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_expenditure_district_hh10 <- household_educ_exp_10 %>% 
+    group_by(district, quintile) %>% 
+    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+```
+
+
+```{r}
+# For all households with children between 0-6 who report spending on education, get  the amount spent on education
+
+tot_educ_expenditure_region_hh10 <- household_educ_exp_10 %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(region, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_educ_expenditure_province_hh10 <- household_educ_exp_10 %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(province, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+tot_educ_expenditure_district_hh10<- household_educ_exp_10 %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(district, quintile) %>% 
+    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+```
+
+
+```{r}
+# Merge the 2 dataframes so we can calculate %share on education
+
+rwa_educ_exp_share_region_hh10 <- merge(tot_expenditure_region_hh10, tot_educ_expenditure_region_hh10, by = c("region", "quintile"))
+rwa_educ_exp_share_province_hh10 <- merge(tot_expenditure_province_hh10, tot_educ_expenditure_province_hh10, by = c("province", "quintile"))
+rwa_educ_exp_share_district_hh10 <- merge(tot_expenditure_district_hh10, tot_educ_expenditure_district_hh10, by = c("district", "quintile"))
+```
+
+
+```{r}
+# Calculate education share as a total of total expenditure
+
+rwa_educ_exp_share_region_hh10 <- rwa_educ_exp_share_region_hh10 %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+rwa_educ_exp_share_province_hh10 <- rwa_educ_exp_share_province_hh10 %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+rwa_educ_exp_share_district_hh10 <- rwa_educ_exp_share_district_hh10 %>% 
+    mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
+
+
+#Save the files as csv
+
+rwa_educ_exp_share_district_hh10 %>% 
+    write_csv("output/rwa_educ_exp_district_hh10.csv")
+
+rwa_educ_exp_share_region_hh10 %>% 
+    write_csv("output/rwa_educ_exp_region_hh10.csv")
+
+rwa_educ_exp_share_province_hh10 %>% 
+    write_csv("output/rwa_educ_exp_province_hh10.csv")
+```
+
+```{r}
+rwa_educ_exp_share_province_hh10 %>% 
+    summarise(xy = sum(educ_exp_2017))
+```
+
+```{r}
+
+# Total population with education expenditure for households reporting a spending on education and with children between ages 0-6
+pop_educ_exp <- rwa_individual %>% 
+    dplyr::select(hhid, weight, s1q1, s1q3y) %>%
+    rename(pop_weight = weight, age = s1q3y) %>%
+    mutate(age = as.numeric(age)) %>%
+    filter(hhid %in% (househld_educ_exp$hhid))
+```
+
+
+```{r}
+# Total population with education expenditure for households reporting a spending on education and with children between ages 0-6
+
+pop_educ_exp %>% 
+    ungroup() %>% 
+    summarise(pop = sum(pop_weight))
+
+```
+```{r}
+# less than 6years
+
+ecd <- pop_educ_exp %>% 
+    filter(age<=6)
+
+
+```
 
