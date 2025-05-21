@@ -42,6 +42,7 @@ rwa_exp_weekly <- read_dta("data/cs_S8A3_expenditure.dta")
 rwa_exp_weekly2 <- read_dta("data/cs_S8B_expenditure.dta")
 rwa_exp_other <- read_dta("data/cs_S9E_Other_expenditure.dta")
 rwa_inc <- read_dta("data/cs_S9D_other_income.dta")
+rwa_poverty <- read_dta("data/EICV5_Poverty_File.dta")
 ```
 
 
@@ -74,10 +75,79 @@ rwa_individual <- rwa_individual %>%
      mutate(across(any_of(factor_columns), as_factor))
 rwa_inc <- rwa_inc %>% 
     mutate(across(any_of(factor_columns), as_factor))
-    
+rwa_poverty <- rwa_poverty%>% 
+    mutate(across(any_of(factor_columns), as_factor))
+
 
 
 ```
+
+
+```{r}
+options(scipen = 999)
+
+# Step 1: Compute total household consumption and weight
+
+rwa_poverty3 <- rwa_poverty %>%
+  mutate(
+    weighted_cons = cons1 * weight,
+    weighted_educ = exp1* weight)
+
+# Step 2: Aggregate to get national total
+total_consumption_nominal <- rwa_poverty3 %>%
+  summarise(national_total = sum(weighted_cons, na.rm = TRUE))
+
+
+```
+
+
+
+```{r}
+# Get average consumption and education expenditure per hh
+
+educ <- rwa_poverty3 %>% 
+    group_by(quintile) %>% 
+    summarise(tot_cons_rwf = sum(weighted_cons),
+              educ_rwf = sum(weighted_educ),
+               total_weights = sum(weight)) %>% 
+              mutate(avg_cons_hh = tot_cons_rwf/total_weights,
+                     avg_educ_hh = educ_rwf/total_weights,
+                     cons_ppp_2025 = tot_cons_rwf/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025],
+                     educ_ppp_2025 = educ_rwf/ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+
+```
+
+
+```{r}
+# Get all households ids with children between ages 0 and 6
+
+educ_ecd <- rwa_poverty3 %>% 
+    filter(hhid %in% unique(rwa_early_childhood$hhid))
+```
+
+
+```{r}
+ecd_cons <-  educ_ecd%>% 
+    group_by(quintile) %>% 
+    summarise(tot_cons_rwf = sum(weighted_cons),
+              educ_rwf = sum(weighted_educ),
+               total_weights = sum(weight)) %>% 
+              mutate(avg_cons_hh = tot_cons_rwf/total_weights,
+                     avg_educ_hh = educ_rwf/total_weights,
+                     cons_ppp_2025 = tot_cons_rwf/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025],
+                     educ_ppp_2025 = educ_rwf/ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+```
+
+
+
+```{r}
+# Add weighted expenditure column to annual consumption df
+
+rwa_exp_annual <- rwa_exp_annual %>% 
+    mutate(weighted_exp = weight*s8a1q3)
+
+```
+
 
 ## Descriptive statistics
 ```{r}
@@ -88,12 +158,130 @@ hhsize <- rwa_individual %>%
     summarise(hhsize = n())
 ```
 
+
 ```{r}
 
-# Total population in Rwanda
-rwa_individual %>% 
-    summarise(sum(weight))
+# Get the total population from household size
+
+rwa_hh_annual_exp <- rwa_exp_annual %>% 
+    left_join(hhsize, by = c("hhid" = "hhid"))
+    
+unique_households <- rwa_hh_annual_exp %>% 
+  group_by(hhid) %>% 
+  summarise(
+    weight = first(weight), 
+    hhsize = first(hhsize)
+  )
+
+
+
+# Total population represented
+total_population <- sum(unique_households$weight * unique_households$hhsize)
+    
+
+
+
 ```
+
+```{r}
+# compare total population in individual survey file
+
+rwa_individual %>% 
+    summarise(pop = sum(weight, na.rm = TRUE))
+```
+
+
+```{r}
+#Test compare with reported figures
+
+mean_comsumption <- weighted.mean(rwa_poverty$sol_jan, rwa_poverty$pop_wt, na.rm=TRUE)
+sum(rwa_poverty$pop_wt)
+
+```
+
+
+
+```{r}
+#Test
+
+household_totals <- rwa_exp_annual %>% 
+  group_by(hhid, region, quintile, weight) %>% 
+  summarise(
+    total_hh_exp = sum(s8a1q3, na.rm = TRUE)  # Sum across items per household
+  ) %>% 
+  ungroup()
+
+# Step 2: Multiply each household's total by its weight to get the weighted expenditure
+household_totals <- household_totals %>%
+  mutate(weighted_hh_exp = total_hh_exp * weight)
+
+# Step 3: Aggregate by region and quintile
+total_exp_by_group <- household_totals %>% 
+  group_by(region, quintile) %>% 
+  summarise(
+    total_weighted_exp = sum(weighted_hh_exp, na.rm = TRUE)
+  ) %>% 
+    ungroup()
+
+total_exp_by_group %>% 
+    summarise(tot = sum(total_weighted_exp))
+```
+```{r}
+
+```
+
+
+
+```{r}
+#Get the total households per quintile
+
+hh_per_quintile <- rwa_exp_annual %>%
+  group_by(quintile) %>%
+  summarise(
+    total_households = n_distinct(hhid),
+    tot_cons = sum(weighted_exp, na.rm = TRUE)
+  ) %>% 
+    mutate(cons_ppp_2025 = tot_cons/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025],
+           avg_cons = tot_cons/total_households,
+           avg_cons_ppp = cons_ppp_2025/total_households)
+
+```
+
+```{r}
+avg_educ <- rwa_exp_annual %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(quintile) %>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
+    mutate(educ_ppp_2025 = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+```
+```{r}
+#Get the total households per quintile-ecd
+
+avg_quint_ecd <- househld_ecd %>%
+  group_by(quintile) %>%
+  summarise(
+    total_households = n_distinct(hhid),
+    tot_cons = sum(weighted_exp, na.rm = TRUE)
+  ) %>% 
+    mutate(cons_ppp_2025 = tot_cons/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025],
+           avg_cons = tot_cons/total_households,
+           avg_cons_ppp = cons_ppp_2025/total_households)
+```
+```{r}
+avg_educ_ecd <- househld_ecd %>% 
+    filter(str_starts(s8a1q1, "10")) %>% 
+    group_by(quintile) %>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
+    mutate(educ_ppp_2025 = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
+```
+
+
+```{r}
+household_totals %>% 
+    summarise(median(weighted_hh_exp))
+```
+
+
 ## Analysis
 ```{r}
 
@@ -101,7 +289,7 @@ rwa_individual %>%
 
 rwa_individual_age <- rwa_individual %>% 
   dplyr::select(hhid, weight, s1q1, s1q3y) %>%
-  rename(pop_weight = weight, age = s1q3y) %>%
+  rename(age = s1q3y, sex = s1q1) %>%
   mutate(age = as.numeric(age))
 
 # Merge expenditure files and individual survey file with age information
@@ -121,42 +309,72 @@ rwa_merge <- rwa_exp_annual %>%
 
 tot_expenditure_region <- rwa_exp_annual %>% 
     group_by(region, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_expenditure_province <- rwa_exp_annual %>% 
     group_by(province, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_expenditure_district <- rwa_exp_annual %>% 
     group_by(district, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 ```
+
+```{r}
+#Total spending by coicop code-broad
+
+spending_disag <- rwa_exp_annual %>%
+  mutate(
+    coicop_broad = str_extract(as.character(s8a1q1), "^\\d{2}")  # Extract first two digits
+  ) %>%
+  group_by(coicop_broad) %>%
+  summarise(total = sum(weighted_exp, na.rm = TRUE))  
+
+spending_disag %>% 
+    write_csv("spending_disagregated.csv")
+
+```
+
+
+```{r}
+#Total spending by coicop code-detailed
+
+detailed_spending <- rwa_exp_annual %>% 
+    group_by(s8a1q1) %>% 
+    summarise(tot = sum(weighted_exp, na.rm = TRUE))
+
+detailed_spending%>% 
+    write_csv("spending_disagregated_detailed.csv")
+```
+
 
 ```{r}
 # Get the total expenditure of the population on education  at different quantiles by region, province and district
 # The local currency is then converted to 2017_ppp LCU and 2017_ppp LCU equivalent values in 2025 
 # Coicop code that start with 10 represents expenditure on education
 
+options(scipen = 999)
+
 tot_educ_expenditure_region <- rwa_exp_annual %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(region, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_educ_expenditure_province <- rwa_exp_annual %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(province, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_educ_expenditure_district <- rwa_exp_annual %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(district, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 ```
@@ -167,6 +385,8 @@ tot_educ_expenditure_district <- rwa_exp_annual %>%
 
 # Merge the total expenditure and education expenditure data frames to enable us to get educ_share as a percentage of total education
 
+options(scipen = 999)
+
 rwa_educ_exp_share_region <- merge(tot_expenditure_region, tot_educ_expenditure_region, by = c("region", "quintile"))
 rwa_educ_exp_share_province <- merge(tot_expenditure_province, tot_educ_expenditure_province, by = c("province", "quintile"))
 rwa_educ_exp_share_district <- merge(tot_expenditure_district, tot_educ_expenditure_district, by = c("district", "quintile"))
@@ -176,6 +396,7 @@ rwa_educ_exp_share_district <- merge(tot_expenditure_district, tot_educ_expendit
 ```{r}
 # Calculate education share as a total of total expenditure for the entire population by region, province and district
 
+options(scipen = 999)
 rwa_educ_exp_share_region <- rwa_educ_exp_share_region %>% 
     mutate(educ_share = (educ_exp_ppp_per_international_dollar/exp_ppp_per_international_dollar)*100)
 
@@ -255,6 +476,36 @@ househld_ecd <- rwa_exp_annual %>%
     filter(hhid %in% unique(rwa_early_childhood$hhid))
 ```
 
+
+```{r}
+#Total spending by coicop code-broad - households with children between 0 and 6
+
+spending_disag_ecd <- househld_ecd %>%
+  mutate(
+    coicop_broad = str_extract(as.character(s8a1q1), "^\\d{2}")  # Extract first two digits
+  ) %>%
+  group_by(coicop_broad) %>%
+  summarise(total = sum(weighted_exp, na.rm = TRUE))  
+
+spending_disag_ecd %>% 
+    write_csv("spending_disagregated_ecd.csv")
+
+```
+
+
+```{r}
+#Total spending by coicop code-detailed - households with children between 0 and 6
+
+detailed_spending_ecd <- househld_ecd %>% 
+    group_by(s8a1q1) %>% 
+    summarise(tot = sum(weighted_exp, na.rm = TRUE))
+
+detailed_spending_ecd %>% 
+    write_csv("spending_disagregated_detailed_ecd.csv")
+```
+
+
+
 ```{r}
 # What is the population of all households with children between ages 0 and 6
 # 7,871,518
@@ -277,17 +528,17 @@ rwa_pop_hh_ecd %>%
 
 tot_expenditure_region_ecd <- househld_ecd %>% 
     group_by(region, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_expenditure_province_ecd <- househld_ecd %>% 
     group_by(province, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_expenditure_district_ecd <- househld_ecd %>% 
     group_by(district, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 ```
 
@@ -301,19 +552,19 @@ tot_expenditure_district_ecd <- househld_ecd %>%
 tot_educ_expenditure_region_ecd <- househld_ecd %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(region, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_educ_expenditure_province_ecd <- househld_ecd %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(province, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_educ_expenditure_district_ecd<- househld_ecd %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(district, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 ```
 
@@ -343,13 +594,13 @@ rwa_educ_exp_share_district_ecd <- rwa_educ_exp_share_district_ecd %>%
 #Save the files as csv
 
 rwa_educ_exp_share_district_ecd %>% 
-    write_csv("output/rwa_educ_exp_district_ecd.csv")
+    write_csv("rwa_educ_exp_district_ecd.csv")
 
 rwa_educ_exp_share_region_ecd %>% 
-    write_csv("output/rwa_educ_exp_region_ecd.csv")
+    write_csv("rwa_educ_exp_region_ecd.csv")
 
 rwa_educ_exp_share_province_ecd %>% 
-    write_csv("output/rwa_educ_exp_province_ecd.csv")
+    write_csv("rwa_educ_exp_province_ecd.csv")
 ```
 
 
@@ -381,17 +632,17 @@ n_distinct(household_educ_exp_10$hhid)
 
 tot_expenditure_region_hh10 <- household_educ_exp_10 %>% 
     group_by(region, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_expenditure_province_hh10 <- household_educ_exp_10 %>% 
     group_by(province, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_expenditure_district_hh10 <- household_educ_exp_10 %>% 
     group_by(district, quintile) %>% 
-    summarise(exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(exp_ppp_per_international_dollar = exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 ```
@@ -403,19 +654,19 @@ tot_expenditure_district_hh10 <- household_educ_exp_10 %>%
 tot_educ_expenditure_region_hh10 <- household_educ_exp_10 %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(region, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE)) %>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE)) %>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_educ_expenditure_province_hh10 <- household_educ_exp_10 %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(province, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 
 tot_educ_expenditure_district_hh10<- household_educ_exp_10 %>% 
     filter(str_starts(s8a1q1, "10")) %>% 
     group_by(district, quintile) %>% 
-    summarise(educ_exp_2017 = sum(s8a1q3, na.rm = TRUE))%>% 
+    summarise(educ_exp_2017 = sum(weighted_exp, na.rm = TRUE))%>% 
     mutate(educ_exp_ppp_per_international_dollar = educ_exp_2017/ ppp_2017$hhe_2017ppp_to_current_LCU[ppp_2017$ccode=="RWA" & ppp_2017$year==2025])
 ```
 
@@ -445,13 +696,13 @@ rwa_educ_exp_share_district_hh10 <- rwa_educ_exp_share_district_hh10 %>%
 #Save the files as csv
 
 rwa_educ_exp_share_district_hh10 %>% 
-    write_csv("output/rwa_educ_exp_district_hh10.csv")
+    write_csv("rwa_educ_exp_district_hh10.csv")
 
 rwa_educ_exp_share_region_hh10 %>% 
-    write_csv("output/rwa_educ_exp_region_hh10.csv")
+    write_csv("rwa_educ_exp_region_hh10.csv")
 
 rwa_educ_exp_share_province_hh10 %>% 
-    write_csv("output/rwa_educ_exp_province_hh10.csv")
+    write_csv("rwa_educ_exp_province_hh10.csv")
 ```
 
 ```{r}
@@ -485,5 +736,10 @@ ecd <- pop_educ_exp %>%
     filter(age<=6)
 
 
+```
+
+```{r}
+ex <- rwa_inc %>% 
+    filter(s9dq1 == 'Yes')
 ```
 
